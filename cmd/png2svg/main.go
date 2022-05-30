@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -34,7 +35,7 @@ type Config struct {
 func NewConfigFromFlags() (*Config, string, error) {
 	var c Config
 
-	flag.StringVar(&c.outputFilename, "o", "-", "SVG output filename")
+	flag.StringVar(&c.outputFilename, "o", "./", "SVG output filename")
 	flag.BoolVar(&c.singlePixelRectangles, "p", false, "use only single pixel rectangles")
 	flag.BoolVar(&c.colorPink, "c", false, "color expanded rectangles pink")
 	flag.BoolVar(&c.verbose, "v", false, "verbose")
@@ -61,6 +62,9 @@ func NewConfigFromFlags() (*Config, string, error) {
 
 	}
 	c.inputFilename = args[0]
+	c.inputFilename = strings.ReplaceAll(c.inputFilename, "\\", "/")
+	c.outputFilename = strings.ReplaceAll(c.outputFilename, "\\", "/")
+
 	return &c, "", nil
 }
 
@@ -82,7 +86,45 @@ func Run() error {
 		fmt.Println(quitMessage)
 		return nil
 	}
+	state, err := os.Stat(c.inputFilename)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
+	}
+	if state.IsDir() {
+		fileList, err := GetAllFile(c.inputFilename)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			os.Exit(1)
+		}
+		baseName := c.inputFilename
+		for _, file := range fileList {
+			fmt.Println("file: ", file)
+			c.inputFilename = file
+			convertOne(c, done, x, y, lastx, lasty, lastLine, box, expanded, c.outputFilename, file[len(baseName):strings.LastIndex(file, ".png")]+".svg")
+		}
+		return nil
+	}
 
+	return convertOne(c, done, x, y, lastx, lasty, lastLine, box, expanded, "", c.outputFilename)
+}
+
+func GetAllFile(pathname string) ([]string, error) {
+	var files []string
+	err := filepath.Walk(pathname, func(path string, info os.FileInfo, err error) error {
+		if info.IsDir() || !strings.HasSuffix(path, ".png") {
+			return nil
+		}
+		files = append(files, strings.ReplaceAll(path, "\\", "/"))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+func convertOne(c *Config, done bool, x int, y int, lastx int, lasty int, lastLine int, box *png2svg.Box, expanded bool, outputBasePath string, outputFilename string) error {
 	img, err := png2svg.ReadPNG(c.inputFilename, c.verbose)
 	if err != nil {
 		return err
@@ -143,7 +185,10 @@ func Run() error {
 	}
 
 	// Write the SVG image to outputFilename
-	return pi.WriteSVG(c.outputFilename)
+	filename := outputBasePath + outputFilename
+	dir := filepath.Dir(filename)
+	os.MkdirAll(dir, os.ModePerm)
+	return pi.WriteSVG(filename)
 }
 
 func main() {
